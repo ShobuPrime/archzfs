@@ -112,15 +112,22 @@ jobs:
           ls -la packages/_utils/
           ls -la packages/dkms/
 
-          # Build RC packages directly with makepkg (bypassing build.sh)
+          # Build RC packages directly with ccm (bypassing build.sh)
           # This avoids building stable packages which may fail on newer kernels
+          # We need to run as buildbot user (not root) for makepkg
           echo "Building RC packages only..."
+
+          # Switch to buildbot user for building
+          sudo -u buildbot bash << 'BUILDEOF'
+          set -e
+          set -x
+          cd /src
 
           # Build zfs-utils-rc
           if [ -d "packages/_utils/zfs-utils-rc" ]; then
-              echo "Building zfs-utils-rc with makepkg..."
+              echo "Building zfs-utils-rc..."
               cd packages/_utils/zfs-utils-rc
-              sudo -u buildbot ccm s || { echo "utils-rc build failed"; exit 1; }
+              ccm s || { echo "utils-rc build failed"; exit 1; }
               cd /src
           else
               echo "ERROR: zfs-utils-rc directory not found!"
@@ -129,9 +136,9 @@ jobs:
 
           # Build zfs-dkms-rc
           if [ -d "packages/dkms/zfs-dkms-rc" ]; then
-              echo "Building zfs-dkms-rc with makepkg..."
+              echo "Building zfs-dkms-rc..."
               cd packages/dkms/zfs-dkms-rc
-              sudo -u buildbot ccm s || { echo "dkms-rc build failed"; exit 1; }
+              ccm s || { echo "dkms-rc build failed"; exit 1; }
               cd /src
           else
               echo "ERROR: zfs-dkms-rc directory not found!"
@@ -139,6 +146,7 @@ jobs:
           fi
 
           echo "RC package builds completed successfully!"
+          BUILDEOF
 
           # Copy packages to repo directory
           rm -rf /src/repo
