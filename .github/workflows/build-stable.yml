@@ -1,0 +1,186 @@
+name: Build Stable Packages
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers on tags like v2.3.5
+      - '!v*-rc*'  # Exclude RC tags
+  workflow_dispatch:  # Allows manual triggering
+    inputs:
+      version:
+        description: 'OpenZFS stable version (e.g., 2.3.5)'
+        required: true
+
+jobs:
+  build-stable:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update system and install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel python python-setuptools python-cffi dkms git wget
+
+      - name: Configure build version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            # Extract version from tag (e.g., v2.3.5 -> 2.3.5)
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building OpenZFS stable $VERSION"
+
+      - name: Build stable packages
+        run: |
+          # Create a non-root user for makepkg
+          useradd -m builder
+          chown -R builder:builder .
+
+          # Run build script
+          su - builder -c "cd $(pwd) && sudo ./build-openzfs-version.sh ${{ steps.version.outputs.version }} stable"
+
+          # Build utils package
+          su - builder -c "cd $(pwd)/packages/_utils/zfs-utils && makepkg -s --noconfirm"
+
+          # Build DKMS package
+          su - builder -c "cd $(pwd)/packages/dkms/zfs-dkms && makepkg -s --nodeps --noconfirm"
+
+          # Copy packages to root (exclude debug packages)
+          for pkg in packages/_utils/zfs-utils/*.pkg.tar.zst; do
+            [ -f "$pkg" ] && echo "$pkg" | grep -qv debug && cp -v "$pkg" . || true
+          done
+          for pkg in packages/dkms/zfs-dkms/*.pkg.tar.zst; do
+            [ -f "$pkg" ] && echo "$pkg" | grep -qv debug && cp -v "$pkg" . || true
+          done
+
+          ls -lh *.pkg.tar.zst
+
+      - name: Create pacman repository database
+        run: |
+          # Create repository database
+          repo-add archzfs.db.tar.gz *.pkg.tar.zst
+
+          # Create file list
+          ls -1 *.pkg.tar.zst > package-list.txt
+          echo "Built stable packages:"
+          cat package-list.txt
+
+      - name: Generate release notes
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          cat > release-notes.md <<'EOF'
+          # OpenZFS ${{ steps.version.outputs.version }} - DKMS Packages for Arch Linux
+
+          ## Installation
+
+          ### Method 1: Direct Install
+
+          ```bash
+          # Download packages
+          wget https://github.com/${{ github.repository }}/releases/download/latest/zfs-utils-*.pkg.tar.zst
+          wget https://github.com/${{ github.repository }}/releases/download/latest/zfs-dkms-*.pkg.tar.zst
+
+          # Install
+          sudo pacman -U zfs-*.pkg.tar.zst
+
+          # Enable ZFS services
+          sudo systemctl enable zfs.target
+          ```
+
+          ### Method 2: Pacman Repository
+
+          Add to `/etc/pacman.conf`:
+
+          ```ini
+          [archzfs]
+          SigLevel = Optional TrustAll
+          Server = https://github.com/${{ github.repository }}/releases/download/latest
+          ```
+
+          Then install:
+
+          ```bash
+          sudo pacman -Sy archzfs/zfs-dkms archzfs/zfs-utils
+          sudo systemctl enable zfs.target
+          ```
+
+          ## Packages Included
+
+          EOF
+
+          for pkg in *.pkg.tar.zst; do
+            size=$(du -h "$pkg" | cut -f1)
+            echo "- \`$pkg\` ($size)" >> release-notes.md
+          done
+
+          cat >> release-notes.md <<'EOF'
+
+          ## OpenZFS Version
+
+          - **Version**: ${{ steps.version.outputs.version }}
+          - **Type**: STABLE
+          - **Source**: https://github.com/openzfs/zfs/releases/tag/zfs-${{ steps.version.outputs.version }}
+
+          ## Features
+
+          - ✅ DKMS packages (kernel-independent)
+          - ✅ Auto-rebuild on kernel updates
+          - ✅ Compatible with Arch Linux rolling release
+          - ✅ Fixed for modern Arch (/usr/lib paths)
+          - ✅ **Stable Release** - Production ready
+
+          ## Documentation
+
+          - [Complete Guide](https://github.com/${{ github.repository }}/blob/master/Claude.md)
+          - [Quick Start](https://github.com/${{ github.repository }}/blob/master/Claude.md#appendix-a-quick-start-guide)
+          - [Build Safety](https://github.com/${{ github.repository }}/blob/master/Claude.md#appendix-b-build-safety-and-system-cleanliness)
+
+          ## Important Notes
+
+          ### mkinitcpio Hook
+
+          **Only add the `zfs` hook to `/etc/mkinitcpio.conf` if your root filesystem is on ZFS.**
+
+          - **BTRFS/ext4 root**: Do NOT add the hook. ZFS loads automatically when needed.
+          - **ZFS root**: Add `zfs` to HOOKS array.
+
+          ### ZFS Pool Auto-Import
+
+          Enable systemd services after installation:
+
+          ```bash
+          sudo systemctl enable zfs.target
+          ```
+
+          ZFS pools do NOT use `/etc/fstab`. They auto-import via systemd services.
+          EOF
+
+          cat release-notes.md
+
+      - name: Create or Update Stable Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest
+          name: "OpenZFS Stable - Latest (${{ steps.version.outputs.version }})"
+          files: |
+            *.pkg.tar.zst
+            archzfs.db.tar.gz
+            archzfs.db
+            archzfs.files.tar.gz
+            archzfs.files
+            package-list.txt
+          body_path: release-notes.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
