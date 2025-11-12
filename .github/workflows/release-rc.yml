@@ -127,7 +127,7 @@ jobs:
           if [ -d "packages/_utils/zfs-utils-rc" ]; then
               echo "Building zfs-utils-rc..."
               cd packages/_utils/zfs-utils-rc
-              ccm s || { echo "utils-rc build failed"; exit 1; }
+              sudo ccm s || { echo "utils-rc build failed"; exit 1; }
               cd /src
           else
               echo "ERROR: zfs-utils-rc directory not found!"
@@ -138,7 +138,7 @@ jobs:
           if [ -d "packages/dkms/zfs-dkms-rc" ]; then
               echo "Building zfs-dkms-rc..."
               cd packages/dkms/zfs-dkms-rc
-              ccm s || { echo "dkms-rc build failed"; exit 1; }
+              sudo ccm s || { echo "dkms-rc build failed"; exit 1; }
               cd /src
           else
               echo "ERROR: zfs-dkms-rc directory not found!"
