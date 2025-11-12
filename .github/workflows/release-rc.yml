@@ -102,36 +102,43 @@ jobs:
           sed -i "/^THREADS=/s/9/$(nproc)/" ~/.config/clean-chroot-manager.conf
           sudo ccm d || true
 
-          # Generate PKGBUILDs for all packages (including RC)
-          # No -s flag so RC packages are generated
-          sudo bash build.sh -d -u all update
+          # Generate PKGBUILDs for ONLY utils and dkms (this includes both stable and RC)
+          # We need to avoid kernel-specific packages that might fail on kernel 6.17
+          echo "Generating RC PKGBUILDs..."
+          sudo bash build.sh -d -u utils update || { echo "utils update failed"; exit 1; }
+          sudo bash build.sh -d -u dkms update || { echo "dkms update failed"; exit 1; }
 
-          build() {
-              sudo bash build.sh -d "$1" make
-          }
+          # Verify RC directories exist
+          ls -la packages/_utils/
+          ls -la packages/dkms/
 
-          # Build ONLY RC packages (not stable)
-          # These use the RC versions from conf.sh
+          # Build RC packages directly with makepkg (bypassing build.sh)
+          # This avoids building stable packages which may fail on newer kernels
           echo "Building RC packages only..."
 
-          # Check if RC packages exist and build them
+          # Build zfs-utils-rc
           if [ -d "packages/_utils/zfs-utils-rc" ]; then
-              echo "Building zfs-utils-rc..."
-              build utils-rc || { echo "utils-rc build failed"; exit 1; }
+              echo "Building zfs-utils-rc with makepkg..."
+              cd packages/_utils/zfs-utils-rc
+              sudo -u buildbot ccm s || { echo "utils-rc build failed"; exit 1; }
+              cd /src
+          else
+              echo "ERROR: zfs-utils-rc directory not found!"
+              exit 1
           fi
 
+          # Build zfs-dkms-rc
           if [ -d "packages/dkms/zfs-dkms-rc" ]; then
-              echo "Building zfs-dkms-rc..."
-              build dkms-rc || { echo "dkms-rc build failed"; exit 1; }
+              echo "Building zfs-dkms-rc with makepkg..."
+              cd packages/dkms/zfs-dkms-rc
+              sudo -u buildbot ccm s || { echo "dkms-rc build failed"; exit 1; }
+              cd /src
+          else
+              echo "ERROR: zfs-dkms-rc directory not found!"
+              exit 1
           fi
 
-          # Build RC kernel-specific packages if they exist (may fail on newer kernels)
-          for mode in lts-rc std-rc hardened-rc zen-rc; do
-              if [ -d "packages/${mode#-rc}/zfs-linux-${mode}" ]; then
-                  echo "Attempting to build ${mode}..."
-                  build ${mode} || echo "Warning: ${mode} build failed (may be incompatible with current kernel)"
-              fi
-          done
+          echo "RC package builds completed successfully!"
 
           # Copy packages to repo directory
           rm -rf /src/repo
