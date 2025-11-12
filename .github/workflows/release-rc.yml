@@ -1,0 +1,167 @@
+on:
+  push:
+    tags:
+      - 'rc-*'  # Triggers on tags like rc-2.4.0-rc3
+  workflow_dispatch:  # Allows manual triggering
+    inputs:
+      version:
+        description: 'OpenZFS RC version (e.g., 2.4.0-rc3)'
+        required: false
+
+name: Release RC
+
+concurrency:
+  group: release-rc
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_NAME: experimental-rc
+  TEMP_RELEASE_NAME: _experimental-rc
+  FAILOVER_RELEASE_NAME: failover-rc
+
+jobs:
+  release-rc:
+    name: Release RC
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure RC version (if manual trigger)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.version != ''
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          echo "Manually building RC version: $VERSION"
+
+          # Download tarball and compute hash
+          TARBALL_URL="https://github.com/openzfs/zfs/releases/download/zfs-${VERSION}/zfs-${VERSION}.tar.gz"
+          wget -q "$TARBALL_URL"
+          HASH=$(sha256sum "zfs-${VERSION}.tar.gz" | awk '{print $1}')
+          rm "zfs-${VERSION}.tar.gz"
+
+          # Update conf.sh
+          sed -i "s/^openzfs_rc_version=.*/openzfs_rc_version=\"$VERSION\"/" conf.sh
+          sed -i "s/^zfs_rc_src_hash=.*/zfs_rc_src_hash=\"$HASH\"/" conf.sh
+
+          echo "Updated conf.sh with RC version $VERSION and hash $HASH"
+
+      - name: Build builder container
+        run: docker build -t archzfs-builder build-container
+
+      - name: Run builder container
+        env:
+          GPG_KEY_DATA: "${{ secrets.GPG_KEY_DATA }}"
+          GPG_KEY_ID: "${{ vars.GPG_KEY_ID }}"
+        run: docker run -e GPG_KEY_DATA -e GPG_KEY_ID -e FAILOVER_RELEASE_NAME --privileged --rm -v "$(pwd):/src" archzfs-builder
+
+      - name: Delete possible leftover temporary release
+        env:
+          GH_REPO: "${{ github.repository }}"
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: gh release delete --yes "${{ env.TEMP_RELEASE_NAME }}" || true
+
+      - name: Publish RC to a temporary release
+        uses: ncipollo/release-action@v1.20.0
+        with:
+          name: ${{ env.TEMP_RELEASE_NAME }}
+          tag: ${{ env.TEMP_RELEASE_NAME }}
+          commit: ${{ github.sha }}
+          artifacts: ./repo/*
+          artifactErrorsFailBuild: true
+          body: |
+            # OpenZFS Release Candidate - Experimental Build
+
+            This is an automated build of OpenZFS RC packages for Arch Linux.
+
+            ## Installation
+
+            ### Method 1: Direct Install
+
+            ```bash
+            # Download RC packages
+            wget https://github.com/${{ github.repository }}/releases/download/${{ env.RELEASE_NAME }}/zfs-utils-rc-*.pkg.tar.zst
+            wget https://github.com/${{ github.repository }}/releases/download/${{ env.RELEASE_NAME }}/zfs-dkms-rc-*.pkg.tar.zst
+
+            # Install
+            sudo pacman -U zfs-*.pkg.tar.zst
+
+            # Enable ZFS services
+            sudo systemctl enable zfs.target
+            ```
+
+            ### Method 2: Pacman Repository
+
+            Add to `/etc/pacman.conf`:
+
+            ```ini
+            [archzfs-rc]
+            SigLevel = Optional TrustAll
+            Server = https://github.com/${{ github.repository }}/releases/download/${{ env.RELEASE_NAME }}
+            ```
+
+            Then install:
+
+            ```bash
+            sudo pacman -Sy archzfs-rc/zfs-dkms-rc archzfs-rc/zfs-utils-rc
+            sudo systemctl enable zfs.target
+            ```
+
+            ## Important Notes
+
+            - ⚠️ **Release Candidate** - Use for testing or kernel compatibility issues
+            - Only add `zfs` to `/etc/mkinitcpio.conf` HOOKS if your root filesystem is on ZFS
+            - For BTRFS/ext4 roots: Do NOT add the hook
+            - Enable systemd services: `sudo systemctl enable zfs.target`
+
+            ## Documentation
+
+            See [Claude.md](https://github.com/${{ github.repository }}/blob/master/Claude.md) for complete guide.
+
+      - name: Delete the existing RC release
+        env:
+          GH_REPO: "${{ github.repository }}"
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: gh release delete --yes "${{ env.RELEASE_NAME }}" || true
+
+      - name: Rename the temporary release to mainline RC
+        env:
+          GH_REPO: "${{ github.repository }}"
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: gh release edit --prerelease --tag "${{ env.RELEASE_NAME }}" --title "${{ env.RELEASE_NAME }}" "${{ env.TEMP_RELEASE_NAME}}"
+
+      - name: Delete the temporary Git tag
+        env:
+          GH_REPO: "${{ github.repository }}"
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/${{ env.TEMP_RELEASE_NAME }}"
+
+      - name: Tag the RC release
+        uses: rickstaa/action-create-tag@v1.7.2
+        with:
+          tag: ${{ env.RELEASE_NAME }}
+          force_push_tag: true
+
+      - name: Release RC failover
+        uses: ncipollo/release-action@v1.20.0
+        with:
+          name: ${{ env.FAILOVER_RELEASE_NAME }}
+          tag: ${{ env.FAILOVER_RELEASE_NAME }}
+          commit: ${{ github.sha }}
+          artifacts: ./repo/*
+          allowUpdates: true
+          artifactErrorsFailBuild: true
+          omitBody: true
+          omitBodyDuringUpdate: true
+          removeArtifacts: true
+          prerelease: true
+
+      - name: Tag the RC failover release
+        uses: rickstaa/action-create-tag@v1.7.2
+        with:
+          tag: ${{ env.FAILOVER_RELEASE_NAME }}
+          force_push_tag: true
