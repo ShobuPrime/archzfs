@@ -7,5 +7,9 @@ archiso/work/
 /repo
 /repo-tmp
 
+# Built packages in root (from Makefile)
+/*.pkg.tar.zst
+/*.pkg.tar.zst.sig
+
 # TEMPORARY
 packages/linux/*-headers/
