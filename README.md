@@ -30,7 +30,7 @@ Two separate repositories are available - choose stable or RC based on your need
 # Add to /etc/pacman.conf
 [archzfs]
 SigLevel = Optional TrustAll
-Server = https://github.com/YOUR_USERNAME/archzfs/releases/download/latest
+Server = https://github.com/YOUR_USERNAME/archzfs/releases/download/experimental
 ```
 
 Install:
@@ -45,7 +45,7 @@ sudo systemctl enable zfs.target
 # Add to /etc/pacman.conf
 [archzfs-rc]
 SigLevel = Optional TrustAll
-Server = https://github.com/YOUR_USERNAME/archzfs/releases/download/rc-latest
+Server = https://github.com/YOUR_USERNAME/archzfs/releases/download/experimental-rc
 ```
 
 Install:

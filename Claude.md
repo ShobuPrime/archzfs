@@ -1028,7 +1028,7 @@ For production use with tested, stable OpenZFS releases:
 # Add to /etc/pacman.conf
 [archzfs]
 SigLevel = Optional TrustAll
-Server = https://github.com/YOUR_USERNAME/archzfs/releases/download/latest
+Server = https://github.com/YOUR_USERNAME/archzfs/releases/download/experimental
 ```
 
 Then install:
@@ -1045,7 +1045,7 @@ For testing or kernel compatibility with release candidates:
 # Add to /etc/pacman.conf
 [archzfs-rc]
 SigLevel = Optional TrustAll
-Server = https://github.com/YOUR_USERNAME/archzfs/releases/download/rc-latest
+Server = https://github.com/YOUR_USERNAME/archzfs/releases/download/experimental-rc
 ```
 
 Then install:
@@ -1058,36 +1058,38 @@ sudo systemctl enable zfs.target
 
 Two automated workflows build and publish packages:
 
-### Stable Builds (`build-stable.yml`)
+### Stable Builds (`release.yml`)
 
 **Triggered by:**
-- Tags: `v2.3.5`, `v2.4.0`, etc.
-- Manual: GitHub Actions → Build Stable Packages → Run workflow
+- Push to `master` branch (when shell scripts or workflows change)
+- Daily schedule: 2:04 AM UTC
+- Manual: GitHub Actions → Release → Run workflow
 
-**Creates release:**
-- Tag: `latest`
-- Repository database: `archzfs.db.tar.gz`
-- Packages: `zfs-utils-*.pkg.tar.zst`, `zfs-dkms-*.pkg.tar.zst`
+**Creates releases:**
+- Tag: `experimental` (main release)
+- Tag: `failover` (backup release)
+- Repository database: `archzfs.db.tar.xz`
+- Packages: All package types (utils, dkms, linux, linux-lts, linux-zen, linux-hardened)
 
 **To trigger:**
 ```bash
-# Create and push a version tag
-git tag v2.3.5
-git push origin v2.3.5
+# Automatically triggers on push to master
+git push origin master
 
 # Or use GitHub Actions web UI for manual trigger
 ```
 
-### RC Builds (`build-rc.yml`)
+### RC Builds (`release-rc.yml`)
 
 **Triggered by:**
 - Tags: `rc-2.4.0-rc3`, `rc-2.4.0-rc4`, etc.
-- Manual: GitHub Actions → Build RC Packages → Run workflow
+- Manual: GitHub Actions → Release RC → Run workflow
 
-**Creates release:**
-- Tag: `rc-latest`
-- Repository database: `archzfs-rc.db.tar.gz`
-- Packages: `zfs-utils-rc-*.pkg.tar.zst`, `zfs-dkms-rc-*.pkg.tar.zst`
+**Creates releases:**
+- Tag: `experimental-rc` (main RC release)
+- Tag: `failover-rc` (backup RC release)
+- Repository database: `archzfs.db.tar.xz`
+- Packages: All package types (utils-rc, dkms-rc, linux-rc, etc.)
 
 **To trigger:**
 ```bash
@@ -1096,16 +1098,17 @@ git tag rc-2.4.0-rc3
 git push origin rc-2.4.0-rc3
 
 # Or use GitHub Actions web UI for manual trigger
+# (optionally specify RC version)
 ```
 
 ## How It Works
 
-1. **Tag Push**: You push a version tag to trigger the workflow
-2. **Build**: GitHub Actions runs in Arch Linux container
-3. **Configure**: Uses `build-openzfs-version.sh` to configure the build
-4. **Compile**: Builds utils and DKMS packages
+1. **Tag Push/Schedule**: Workflow is triggered
+2. **Build Container**: Docker builds archzfs-builder image
+3. **Configure**: Reads versions from `conf.sh` (or manual input for RC)
+4. **Build**: Uses clean-chroot-manager for isolated builds
 5. **Repository**: Creates pacman database with `repo-add`
-6. **Release**: Updates the appropriate release (`latest` or `rc-latest`)
+6. **Release**: Updates the appropriate release (`experimental` or `experimental-rc`)
 7. **Install**: Users can install via pacman from the release URL
 
 ## Workflow Features
@@ -1166,7 +1169,7 @@ git push origin rc-2.4.0-rc4
 git push origin v2.4.0
 
 # GitHub Actions builds automatically
-# The 'latest' or 'rc-latest' release is updated
+# The 'experimental' or 'experimental-rc' release is updated
 # Users get the new version on next 'pacman -Sy'
 ```
 
@@ -1185,12 +1188,12 @@ Replace `YOUR_USERNAME` with your GitHub username:
 
 **Stable:**
 ```
-https://github.com/YOUR_USERNAME/archzfs/releases/download/latest
+https://github.com/YOUR_USERNAME/archzfs/releases/download/experimental
 ```
 
 **RC:**
 ```
-https://github.com/YOUR_USERNAME/archzfs/releases/download/rc-latest
+https://github.com/YOUR_USERNAME/archzfs/releases/download/experimental-rc
 ```
 
 ## Advantages
@@ -1215,7 +1218,7 @@ sudo tee -a /etc/pacman.conf <<EOF
 
 [archzfs]
 SigLevel = Optional TrustAll
-Server = https://github.com/YOUR_USERNAME/archzfs/releases/download/latest
+Server = https://github.com/YOUR_USERNAME/archzfs/releases/download/experimental
 EOF
 
 # Install packages
@@ -1239,10 +1242,10 @@ sudo pacman -Sy && sudo pacman -S archzfs/zfs-dkms archzfs/zfs-utils
 - See: https://wiki.archlinux.org/title/Pacman/Package_signing
 
 **Release persistence:**
-- The `latest` and `rc-latest` tags are updated in place
+- The `experimental` and `experimental-rc` tags are updated in place
 - Each new build overwrites the previous release
 - Users always get the newest version
-- For historical versions, use specific version tags
+- Failover releases (`failover` and `failover-rc`) provide backup copies
 
 **Multiple architectures:**
 - Current workflows build for x86_64 only
