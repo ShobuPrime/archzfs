@@ -77,14 +77,104 @@ jobs:
           grep '^openzfs_rc_version=' conf.sh
           grep '^zfs_rc_src_hash=' conf.sh
 
+      - name: Create RC-specific entrypoint
+        run: |
+          # Create custom entrypoint that builds ONLY RC packages
+          cat > build-container/entrypoint-rc.sh << 'RCEOF'
+          #!/bin/bash
+          set -e
+
+          if [ ! -z "${GPG_KEY_DATA-}" ]; then
+              if [ -z "${GPG_KEY_ID-}" ]; then
+                  echo 'GPG_KEY_ID is not set, but GPG_KEY_DATA is set. Please set GPG_KEY_ID to the key ID of the key.'
+                  exit 1
+              fi
+              gpg --import /dev/stdin <<<"${GPG_KEY_DATA}"
+          fi
+
+          gpg --recv-keys 3A9917BF0DED5C13F69AC68FABEC0A1208037BE9
+
+          set -x
+
+          sudo chown -R buildbot:buildbot /src
+          cd /src
+
+          sed -i "/^THREADS=/s/9/$(nproc)/" ~/.config/clean-chroot-manager.conf
+          sudo ccm d || true
+
+          # Generate PKGBUILDs for all packages (including RC)
+          # No -s flag so RC packages are generated
+          sudo bash build.sh -d -u all update
+
+          build() {
+              sudo bash build.sh -d "$1" make
+          }
+
+          # Build ONLY RC packages (not stable)
+          # These use the RC versions from conf.sh
+          echo "Building RC packages only..."
+
+          # Check if RC packages exist and build them
+          if [ -d "packages/_utils/zfs-utils-rc" ]; then
+              echo "Building zfs-utils-rc..."
+              build utils-rc || { echo "utils-rc build failed"; exit 1; }
+          fi
+
+          if [ -d "packages/dkms/zfs-dkms-rc" ]; then
+              echo "Building zfs-dkms-rc..."
+              build dkms-rc || { echo "dkms-rc build failed"; exit 1; }
+          fi
+
+          # Build RC kernel-specific packages if they exist (may fail on newer kernels)
+          for mode in lts-rc std-rc hardened-rc zen-rc; do
+              if [ -d "packages/${mode#-rc}/zfs-linux-${mode}" ]; then
+                  echo "Attempting to build ${mode}..."
+                  build ${mode} || echo "Warning: ${mode} build failed (may be incompatible with current kernel)"
+              fi
+          done
+
+          # Copy packages to repo directory
+          rm -rf /src/repo
+          mkdir -p /src/repo
+          sudo chmod -v 644 /scratch/.buildroot/root/repo/*.pkg.tar* || true
+          cp -v /scratch/.buildroot/root/repo/*.pkg.tar* /src/repo/ || true
+
+          cd /src/repo
+          # Ensure we do not have any stray signatures around
+          rm -fv *.sig
+
+          if [ ! -z "${GPG_KEY_ID-}" ]; then
+              # We use find here as that allows us to exclude .sig files
+              find . -type f -iname '*.pkg.tar*' -not -iname '*.sig' -print -exec gpg --batch --yes --detach-sign --use-agent -u "${GPG_KEY_ID}" {} \;
+              find . -type f -iname '*.pkg.tar*' -not -iname '*.sig' -print0 | xargs -0 repo-add -k "${GPG_KEY_ID}" -s -v archzfs.db.tar.xz
+          else
+              repo-add archzfs.db.tar.xz *.pkg.tar* || true
+          fi
+          cd /src
+          RCEOF
+
+          chmod +x build-container/entrypoint-rc.sh
+          echo "Created RC-specific entrypoint:"
+          head -30 build-container/entrypoint-rc.sh
+
       - name: Build builder container
         run: docker build -t archzfs-builder build-container
 
-      - name: Run builder container
+      - name: Run builder container for RC
         env:
           GPG_KEY_DATA: "${{ secrets.GPG_KEY_DATA }}"
           GPG_KEY_ID: "${{ vars.GPG_KEY_ID }}"
-        run: docker run -e GPG_KEY_DATA -e GPG_KEY_ID -e FAILOVER_RELEASE_NAME --privileged --rm -v "$(pwd):/src" archzfs-builder
+        run: |
+          # Run with the RC-specific entrypoint
+          docker run \
+            -e GPG_KEY_DATA \
+            -e GPG_KEY_ID \
+            -e FAILOVER_RELEASE_NAME \
+            --privileged \
+            --rm \
+            -v "$(pwd):/src" \
+            --entrypoint /src/build-container/entrypoint-rc.sh \
+            archzfs-builder
 
       - name: Delete possible leftover temporary release
         env:
