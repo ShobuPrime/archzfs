@@ -65,6 +65,22 @@ See [Appendix C](Claude.md#appendix-c-using-the-pacman-repository) for complete 
 - ✅ **GitHub Actions** - Automated builds on release tags
 - ✅ **Pacman Repository** - Host packages via GitHub Releases
 
+## Triggering Builds
+
+### Stable Builds
+Automatically triggered on:
+- Push to `master` branch
+- Daily schedule (2:04 AM UTC)
+
+### RC Builds
+Trigger by creating a tag:
+```bash
+git tag rc-2.4.0-rc3
+git push origin rc-2.4.0-rc3
+```
+
+The workflow will extract the version (`2.4.0-rc3`), download the tarball, compute the hash, and build the packages.
+
 ## Documentation
 
 - **[Claude.md](Claude.md)** - Complete guide with fixes, troubleshooting, and appendices
